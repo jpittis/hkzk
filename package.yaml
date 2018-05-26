@@ -1,0 +1,52 @@
+name:                hkzk
+version:             0.1.0.0
+github:              "jpittis/hkzk"
+license:             BSD3
+author:              "Jake Pittis"
+maintainer:          "jakepittis@gmail.com"
+copyright:           "Jake Pittis"
+
+extra-source-files:
+- README.md
+
+# To avoid duplicated efforts in documentation and dealing with the
+# complications of embedding Haddock markup inside cabal files, it is
+# common to point users to the README.md file.
+description:         Please see the README on GitHub at <https://github.com/jpittis/hkzk#readme>
+
+dependencies:
+- base >= 4.7 && < 5
+- hzk
+- servant-server
+- text
+- aeson
+- warp
+- mtl
+- resource-pool
+- bytestring
+- hspec
+
+library:
+  source-dirs: src
+
+executables:
+  hkzk-exe:
+    main:                Main.hs
+    source-dirs:         app
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - hkzk
+
+tests:
+  hkzk-test:
+    main:                Spec.hs
+    source-dirs:         test
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - hkzk
