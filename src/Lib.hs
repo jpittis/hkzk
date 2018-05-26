@@ -1,26 +1,31 @@
 {-# LANGUAGE DataKinds         #-}
 {-# LANGUAGE TypeOperators     #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE DeriveGeneric     #-}
 module Lib
     ( start
     ) where
 
-import Servant
-import Data.Text (Text, unpack, pack)
-import Data.Text.Encoding (encodeUtf8, decodeUtf8)
-import qualified Data.ByteString.Lazy.Char8 as ByteString (pack)
-import Data.Monoid ((<>))
-import Data.ByteString (ByteString)
-import Data.Aeson
-import GHC.Generics
-import Control.Monad.Reader
-import Database.Zookeeper (Zookeeper, get, create, set, delete, getChildren,
-                           AclList(..), ZKError)
-import Database.Zookeeper.Pool (connect)
-import Data.Pool
-import Network.Wai.Handler.Warp (run)
+import           Store (Store, Entry(..))
+import qualified Store
 
+import           Servant
+import           Data.Text (Text, unpack, pack)
+import           Data.Text.Encoding (encodeUtf8, decodeUtf8)
+import qualified Data.ByteString.Lazy.Char8 as ByteString (pack)
+import           Data.Monoid ((<>))
+import           Data.ByteString (ByteString)
+import           Data.Aeson
+import           GHC.Generics
+import           Control.Monad.Reader
+import           Database.Zookeeper (Zookeeper, get, create, set, delete, getChildren,
+                                     AclList(..), ZKError)
+import           Database.Zookeeper.Pool (connect)
+import           Data.Pool
+import           Network.Wai.Handler.Warp (run)
+
+import           Control.Concurrent.ReadWriteLock (RWLock)
+import qualified Control.Concurrent.ReadWriteLock as RWL
+import qualified Data.HashTable.IO as HT
 
 type HKZKAPI =
        "entries"                                                :> Get    '[JSON] [Entry]
@@ -32,14 +37,26 @@ type HKZKAPI =
 api :: Proxy HKZKAPI
 api = Proxy
 
-newtype State = State { pool :: Pool Zookeeper }
+type HashTable k v = HT.BasicHashTable k v
+
+data State = State
+  { pool  :: Pool Zookeeper
+  , store :: Store
+  , lock  :: RWLock
+  }
 
 initState :: IO State
 initState = do
   pool <- connect "localhost:2181" 100 Nothing Nothing 1 1 1
   withResource pool $ \client ->
     create client "/entries" Nothing OpenAclUnsafe []
-  return State { pool = pool }
+  store <- Store.fromList []
+  lock <- RWL.new
+  return State
+    { pool  = pool
+    , store = store
+    , lock  = lock
+    }
 
 type AppM = ReaderT State Handler
 
@@ -61,11 +78,6 @@ start port =  do
   state <- initState
   run port $ app state
 
-data Entry = Entry
-  { name  :: Text
-  , value :: Maybe Text
-  } deriving (Generic)
-
 instance ToJSON Entry
 instance FromJSON Entry
 
@@ -78,14 +90,14 @@ getEntries = do
     Right children -> return $ map toEntry children
   where
     toEntry :: String -> Entry
-    toEntry name = Entry { name = pack name, value = Nothing }
+    toEntry name = Entry { name = pack name, body = Nothing }
 
 createEntry :: Entry -> AppM NoContent
 createEntry entry = do
   let path = unpack $ "/entries/" <> name entry
-  let body = fmap encodeUtf8 (value entry)
+  let value = fmap encodeUtf8 (body entry)
   result <- withZookeeper $ \client ->
-    create client path body OpenAclUnsafe []
+    create client path value OpenAclUnsafe []
   case result of
     Left err -> throwZKError err
     Right _ -> return NoContent
@@ -93,9 +105,9 @@ createEntry entry = do
 updateEntry :: Text -> Entry -> AppM NoContent
 updateEntry name entry = do
   let path = unpack $ "/entries/" <> name
-  let body = fmap encodeUtf8 (value entry)
+  let value = fmap encodeUtf8 (body entry)
   result <- withZookeeper $ \client ->
-    set client path body Nothing
+    set client path value Nothing
   case result of
     Left err -> throwZKError err
     Right _ -> return NoContent
@@ -116,7 +128,7 @@ getEntry name = do
     get client path Nothing
   case result of
     Left err -> throwZKError err
-    Right (value, _) -> return Entry { name = name, value = fmap decodeUtf8 value }
+    Right (body, _) -> return Entry { name = name, body = fmap decodeUtf8 body }
 
 withZookeeper :: (Zookeeper -> IO a) -> AppM a
 withZookeeper f = do

@@ -25,6 +25,9 @@ dependencies:
 - resource-pool
 - bytestring
 - hspec
+- concurrent-extra
+- hashtables
+- hashable
 
 library:
   source-dirs: src
