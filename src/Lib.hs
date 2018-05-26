@@ -3,22 +3,24 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveGeneric     #-}
 module Lib
-    ( app
-    , initState
+    ( start
     ) where
 
 import Servant
-import Data.Text (Text, unpack)
+import Data.Text (Text, unpack, pack)
 import Data.Text.Encoding (encodeUtf8, decodeUtf8)
-import Data.ByteString.Lazy.Char8 (pack)
+import qualified Data.ByteString.Lazy.Char8 as ByteString (pack)
 import Data.Monoid ((<>))
 import Data.ByteString (ByteString)
 import Data.Aeson
 import GHC.Generics
 import Control.Monad.Reader
-import Database.Zookeeper (Zookeeper, get, create, set, delete, AclList(..), ZKError)
+import Database.Zookeeper (Zookeeper, get, create, set, delete, getChildren,
+                           AclList(..), ZKError)
 import Database.Zookeeper.Pool (connect)
 import Data.Pool
+import Network.Wai.Handler.Warp (run)
+
 
 type HKZKAPI =
        "entries"                                                :> Get    '[JSON] [Entry]
@@ -54,6 +56,11 @@ nt s x = runReaderT x s
 app :: State -> Application
 app s = serve api $ hoistServer api (nt s) server
 
+start :: Int -> IO ()
+start port =  do
+  state <- initState
+  run port $ app state
+
 data Entry = Entry
   { name  :: Text
   , value :: Maybe Text
@@ -63,7 +70,15 @@ instance ToJSON Entry
 instance FromJSON Entry
 
 getEntries :: AppM [Entry]
-getEntries = return []
+getEntries = do
+  result <- withZookeeper $ \client ->
+    getChildren client "/entries" Nothing
+  case result of
+    Left err -> throwZKError err
+    Right children -> return $ map toEntry children
+  where
+    toEntry :: String -> Entry
+    toEntry name = Entry { name = pack name, value = Nothing }
 
 createEntry :: Entry -> AppM NoContent
 createEntry entry = do
@@ -110,4 +125,4 @@ withZookeeper f = do
 
 throwZKError :: ZKError -> AppM a
 throwZKError err =
-  throwError err500 { errBody = pack . show $ err }
+  throwError err500 { errBody = ByteString.pack . show $ err }
