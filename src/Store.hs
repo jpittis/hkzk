@@ -8,6 +8,7 @@ module Store
     , insert
     , delete
     , lookup
+    , toList
     ) where
 
 import           Prelude hiding (lookup)
@@ -36,8 +37,12 @@ fromList entries = do
   where
     toKeyValue entry = (name entry, entry)
 
-insert :: Store -> Entry -> IO ()
-insert store entry = H.insert (hash store) (name entry) entry
+toList :: Store -> IO [Entry]
+toList store =
+  map snd <$> H.toList (hash store)
+
+insert :: Store -> Name -> Entry -> IO ()
+insert store = H.insert (hash store)
 
 delete :: Store -> Name -> IO ()
 delete store = H.delete (hash store)

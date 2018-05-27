@@ -83,57 +83,74 @@ instance FromJSON Entry
 
 getEntries :: AppM [Entry]
 getEntries = do
-  result <- withZookeeper $ \client ->
-    getChildren client "/entries" Nothing
-  case result of
-    Left err -> throwZKError err
-    Right children -> return $ map toEntry children
-  where
-    toEntry :: String -> Entry
-    toEntry name = Entry { name = pack name, body = Nothing }
+  store <- asks store
+  withReadLock $ Store.toList store
 
 createEntry :: Entry -> AppM NoContent
 createEntry entry = do
-  let path = unpack $ "/entries/" <> name entry
-  let value = fmap encodeUtf8 (body entry)
-  result <- withZookeeper $ \client ->
-    create client path value OpenAclUnsafe []
+  store <- asks store
+  pool <- asks pool
+  result <- withWriteLock $ do
+    let path = unpack $ "/entries/" <> name entry
+    let value = fmap encodeUtf8 (body entry)
+    result <- withResource pool $ \client ->
+      create client path value OpenAclUnsafe []
+    case result of
+      Left err -> return $ Left err
+      Right _ -> return . Right $ Store.insert store (name entry) entry
   case result of
     Left err -> throwZKError err
     Right _ -> return NoContent
 
 updateEntry :: Text -> Entry -> AppM NoContent
 updateEntry name entry = do
-  let path = unpack $ "/entries/" <> name
-  let value = fmap encodeUtf8 (body entry)
-  result <- withZookeeper $ \client ->
-    set client path value Nothing
+  store <- asks store
+  pool <- asks pool
+  result <- withWriteLock $ do
+    let path = unpack $ "/entries/" <> name
+    let value = fmap encodeUtf8 (body entry)
+    result <- withResource pool $ \client ->
+      set client path value Nothing
+    case result of
+      Left err -> return $ Left err
+      Right _ -> return . Right $ Store.insert store name entry
   case result of
     Left err -> throwZKError err
     Right _ -> return NoContent
 
 deleteEntry :: Text -> AppM NoContent
 deleteEntry name = do
-  let path = unpack $ "/entries/" <> name
-  result <- withZookeeper $ \client ->
-    delete client path Nothing
+  store <- asks store
+  pool <- asks pool
+  result <- withWriteLock $ do
+    let path = unpack $ "/entries/" <> name
+    result <- withResource pool $ \client ->
+      delete client path Nothing
+    case result of
+      Left err -> return $ Left err
+      Right _  -> return . Right $ Store.delete store name
   case result of
     Left err -> throwZKError err
-    Right _ -> return NoContent
+    Right _  -> return NoContent
 
 getEntry :: Text -> AppM Entry
 getEntry name = do
-  let path = unpack $ "/entries/" <> name
-  result <- withZookeeper $ \client ->
-    get client path Nothing
-  case result of
-    Left err -> throwZKError err
-    Right (body, _) -> return Entry { name = name, body = fmap decodeUtf8 body }
+  store <- asks store
+  maybeEntry <- withReadLock $
+    liftIO $ Store.lookup store name
+  case maybeEntry of
+    Just entry -> return entry
+    Nothing    -> throwError err404
 
-withZookeeper :: (Zookeeper -> IO a) -> AppM a
-withZookeeper f = do
-  pool <- asks pool
-  liftIO $ withResource pool f
+withReadLock :: IO a -> AppM a
+withReadLock f = do
+  lock <- asks lock
+  liftIO $ RWL.withRead lock f
+
+withWriteLock :: IO a -> AppM a
+withWriteLock f = do
+  lock <- asks lock
+  liftIO $ RWL.withWrite lock f
 
 throwZKError :: ZKError -> AppM a
 throwZKError err =
