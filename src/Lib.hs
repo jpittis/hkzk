@@ -5,7 +5,7 @@ module Lib
     ( start
     ) where
 
-import           Store (Store, Entry(..))
+import           Store (Store, Entry(..), Body, Name)
 import qualified Store
 
 import           Servant
@@ -57,6 +57,35 @@ initState = do
     , store = store
     , lock  = lock
     }
+
+-- TODO(jpittis): This doesn't do anything.
+syncEntries :: State -> IO (Either ZKError ())
+syncEntries state =
+  RWL.withWrite (lock state) $ do
+    result <- fetchEntries (pool state)
+    case result of
+      Left err -> return $ Left err
+      Right entries -> return $ Right ()
+
+fetchEntries :: Pool Zookeeper -> IO (Either ZKError [Entry])
+fetchEntries pool =
+  withResource pool $ \client -> do
+    result <- getChildren client "/entries" Nothing
+    case result of
+      Left err -> return $ Left err
+      Right children -> getEntries client children
+  where
+    getEntries :: Zookeeper -> [String] -> IO (Either ZKError [Entry])
+    getEntries client children =
+      sequence <$> mapM (getEntry client) children
+    getEntry :: Zookeeper -> String -> IO (Either ZKError Entry)
+    getEntry client name = do
+      let path = "/entries/" <> name
+      result <- get client path Nothing
+      case result of
+        Left err -> return $ Left err
+        Right (body, _) -> return . Right $
+          Entry { name = pack name, body = fmap decodeUtf8 body }
 
 type AppM = ReaderT State Handler
 
