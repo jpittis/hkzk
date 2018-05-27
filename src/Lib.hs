@@ -27,7 +27,8 @@ import qualified Control.Concurrent.ReadWriteLock as RWL
 import qualified Data.HashTable.IO as HT
 
 type HKZKAPI =
-       "entries"                                                :> Get    '[JSON] [Entry]
+       "sync"                                                   :> Get    '[JSON] NoContent
+  :<|> "entries"                                                :> Get    '[JSON] [Entry]
   :<|> "entries"                       :> ReqBody '[JSON] Entry :> Post   '[JSON] NoContent
   :<|> "entries" :> Capture "key" Text :> ReqBody '[JSON] Entry :> Post   '[JSON] NoContent
   :<|> "entries" :> Capture "key" Text                          :> Delete '[JSON] NoContent
@@ -61,6 +62,14 @@ initState = do
         , lock  = lock
         }
 
+sync :: AppM NoContent
+sync = do
+  state  <- ask
+  result <- liftIO $ syncEntries state
+  case result of
+    Left err -> throwZKError err
+    Right _  -> return NoContent
+
 syncEntries :: State -> IO (Either ZKError ())
 syncEntries state =
   RWL.withWrite (lock state) $ do
@@ -92,7 +101,8 @@ fetchEntries pool =
 type AppM = ReaderT State Handler
 
 server :: ServerT HKZKAPI AppM
-server = getEntries
+server = sync
+    :<|> getEntries
     :<|> createEntry
     :<|> updateEntry
     :<|> deleteEntry
