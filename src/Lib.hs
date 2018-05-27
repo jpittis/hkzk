@@ -22,7 +22,6 @@ import           Database.Zookeeper (Zookeeper, get, create, set, delete, getChi
 import           Database.Zookeeper.Pool (connect)
 import           Data.Pool
 import           Network.Wai.Handler.Warp (run)
-
 import           Control.Concurrent.ReadWriteLock (RWLock)
 import qualified Control.Concurrent.ReadWriteLock as RWL
 import qualified Data.HashTable.IO as HT
@@ -58,14 +57,13 @@ initState = do
     , lock  = lock
     }
 
--- TODO(jpittis): This doesn't do anything.
 syncEntries :: State -> IO (Either ZKError ())
 syncEntries state =
   RWL.withWrite (lock state) $ do
     result <- fetchEntries (pool state)
     case result of
       Left err -> return $ Left err
-      Right entries -> return $ Right ()
+      Right entries -> Right <$> Store.replace (store state) entries
 
 fetchEntries :: Pool Zookeeper -> IO (Either ZKError [Entry])
 fetchEntries pool =

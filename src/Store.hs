@@ -9,6 +9,7 @@ module Store
     , delete
     , lookup
     , toList
+    , replace
     ) where
 
 import           Prelude hiding (lookup)
@@ -17,6 +18,7 @@ import qualified Data.HashTable.IO as HT
 import qualified Data.HashTable.IO as H
 import           Data.Hashable (Hashable)
 import           GHC.Generics
+import           Data.IORef
 
 type Name = Text
 type Body = Text
@@ -28,24 +30,41 @@ data Entry = Entry
 
 type HashTable = HT.BasicHashTable Name Entry
 
-newtype Store = Store { hash :: HashTable }
+newtype Store = Store { hash :: IORef HashTable }
 
 fromList :: [Entry] -> IO Store
 fromList entries = do
-  hash <- H.fromList $ map toKeyValue entries
-  return Store { hash = hash }
-  where
-    toKeyValue entry = (name entry, entry)
+  hash <- hashFromList entries
+  ref  <- newIORef hash
+  return Store { hash = ref }
 
 toList :: Store -> IO [Entry]
-toList store =
-  map snd <$> H.toList (hash store)
+toList store = do
+  hash <- readIORef (hash store)
+  map snd <$> H.toList hash
 
 insert :: Store -> Name -> Entry -> IO ()
-insert store = H.insert (hash store)
+insert store name entry = do
+  hash <- readIORef (hash store)
+  H.insert hash name entry
 
 delete :: Store -> Name -> IO ()
-delete store = H.delete (hash store)
+delete store name = do
+  hash <- readIORef (hash store)
+  H.delete hash name
 
 lookup :: Store -> Name -> IO (Maybe Entry)
-lookup store = H.lookup (hash store)
+lookup store name = do
+  hash <- readIORef (hash store)
+  H.lookup hash name
+
+replace :: Store -> [Entry] -> IO ()
+replace store entries = do
+  new <- hashFromList entries
+  writeIORef (hash store) new
+
+hashFromList :: [Entry] -> IO HashTable
+hashFromList entries =
+  H.fromList $ map toKeyValue entries
+  where
+    toKeyValue entry = (name entry, entry)
