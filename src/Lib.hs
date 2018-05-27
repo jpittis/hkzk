@@ -44,18 +44,22 @@ data State = State
   , lock  :: RWLock
   }
 
-initState :: IO State
+initState :: IO (Either ZKError State)
 initState = do
   pool <- connect "localhost:2181" 100 Nothing Nothing 1 1 1
-  withResource pool $ \client ->
+  result <- withResource pool $ \client -> do
     create client "/entries" Nothing OpenAclUnsafe []
-  store <- Store.fromList []
-  lock <- RWL.new
-  return State
-    { pool  = pool
-    , store = store
-    , lock  = lock
-    }
+    fetchEntries pool
+  case result of
+    Left err -> return . Left $ err
+    Right entries -> do
+      store <- Store.fromList entries
+      lock <- RWL.new
+      return . Right $ State
+        { pool  = pool
+        , store = store
+        , lock  = lock
+        }
 
 syncEntries :: State -> IO (Either ZKError ())
 syncEntries state =
@@ -100,10 +104,12 @@ nt s x = runReaderT x s
 app :: State -> Application
 app s = serve api $ hoistServer api (nt s) server
 
-start :: Int -> IO ()
+start :: Int -> IO (Either ZKError ())
 start port =  do
   state <- initState
-  run port $ app state
+  case state of
+    Left err -> return . Left $ err
+    Right state -> Right <$> run port (app state)
 
 instance ToJSON Entry
 instance FromJSON Entry
